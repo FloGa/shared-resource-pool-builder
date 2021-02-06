@@ -1,0 +1,10 @@
+[package]
+name = "shared-resource-pool-builder"
+version = "0.1.0-SNAPSHOT"
+authors = ["Florian Gamböck <mail@floga.de>"]
+edition = "2018"
+
+description = "Create thread pools with a shared resource."
+
+[dependencies]
+rayon = "1.5.0"
