@@ -56,35 +56,16 @@ impl Drop for JobCounter {
     }
 }
 
-struct SharedResourcePoolBuilder<Arg, SR> {
-    tx: Sender<Job<Arg>>,
+struct SharedResourcePoolBuilder<SType, SR> {
+    tx: SType,
     handler_thread: JoinHandle<SR>,
 }
 
-impl<Arg, SR> SharedResourcePoolBuilder<Arg, SR>
+impl<SType, Arg, SR> SharedResourcePoolBuilder<SType, SR>
 where
     Arg: Send + 'static,
-    SR: Send + 'static,
+    SType: SenderLike<Item = Job<Arg>> + Clone + Send + 'static,
 {
-    fn new<SC>(mut shared_resource: SR, mut shared_consumer_fn: SC) -> Self
-    where
-        SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
-    {
-        let (tx, rx) = channel::<Job<Arg>>();
-
-        let join_handle = thread::spawn(move || {
-            for job in rx {
-                shared_consumer_fn(&mut shared_resource, job.0);
-            }
-            shared_resource
-        });
-
-        Self {
-            tx,
-            handler_thread: join_handle,
-        }
-    }
-
     fn create_pool<P, PArg, C>(
         &self,
         producer_fn: P,
@@ -122,6 +103,31 @@ where
     fn join(self) -> std::thread::Result<SR> {
         drop(self.tx);
         self.handler_thread.join()
+    }
+}
+
+impl<Arg, SR> SharedResourcePoolBuilder<Sender<Job<Arg>>, SR>
+where
+    Arg: Send + 'static,
+    SR: Send + 'static,
+{
+    fn new<SC>(mut shared_resource: SR, mut shared_consumer_fn: SC) -> Self
+    where
+        SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
+    {
+        let (tx, rx) = channel::<Job<Arg>>();
+
+        let join_handle = thread::spawn(move || {
+            for job in rx {
+                shared_consumer_fn(&mut shared_resource, job.0);
+            }
+            shared_resource
+        });
+
+        Self {
+            tx,
+            handler_thread: join_handle,
+        }
     }
 }
 
