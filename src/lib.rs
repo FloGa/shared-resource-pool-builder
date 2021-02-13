@@ -1,4 +1,4 @@
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, sync_channel, Receiver, SendError, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
@@ -6,6 +6,25 @@ use std::thread::JoinHandle;
 use rayon::prelude::*;
 
 type Counter = Arc<(Mutex<u32>, Condvar)>;
+
+trait SenderLike {
+    type Item;
+    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>>;
+}
+
+impl<T> SenderLike for Sender<T> {
+    type Item = T;
+    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>> {
+        Sender::send(self, t)
+    }
+}
+
+impl<T> SenderLike for SyncSender<T> {
+    type Item = T;
+    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>> {
+        SyncSender::send(self, t)
+    }
+}
 
 struct Job<Arg>(Arg, JobCounter);
 
@@ -37,22 +56,26 @@ impl Drop for JobCounter {
     }
 }
 
-struct SharedResourcePoolBuilder<Arg, SR> {
-    tx: Sender<Job<Arg>>,
+struct SharedResourcePoolBuilder<SType, SR> {
+    tx: SType,
     handler_thread: JoinHandle<SR>,
 }
 
-impl<Arg, SR> SharedResourcePoolBuilder<Arg, SR>
+impl<SType, Arg, SR> SharedResourcePoolBuilder<SType, SR>
 where
     Arg: Send + 'static,
+    SType: SenderLike<Item = Job<Arg>> + Clone + Send + 'static,
     SR: Send + 'static,
 {
-    fn new<SC>(mut shared_resource: SR, mut shared_consumer_fn: SC) -> Self
+    fn init<SC>(
+        tx: SType,
+        rx: Receiver<Job<Arg>>,
+        mut shared_resource: SR,
+        mut shared_consumer_fn: SC,
+    ) -> Self
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {
-        let (tx, rx) = channel::<Job<Arg>>();
-
         let join_handle = thread::spawn(move || {
             for job in rx {
                 shared_consumer_fn(&mut shared_resource, job.0);
@@ -76,8 +99,39 @@ where
         PArg: Send + 'static,
         C: Fn(PArg) -> Arg + Send + Sync + 'static,
     {
+        let (tx, rx) = channel::<PArg>();
+        self.init_pool(tx, rx, producer_fn, consumer_fn)
+    }
+
+    fn create_pool_bounded<P, PArg, C>(
+        &self,
+        bound: usize,
+        producer_fn: P,
+        consumer_fn: C,
+    ) -> Result<JobHandle, std::io::Error>
+    where
+        P: Fn(SyncSender<PArg>) -> () + Send + 'static,
+        PArg: Send + 'static,
+        C: Fn(PArg) -> Arg + Send + Sync + 'static,
+    {
+        let (tx, rx) = sync_channel::<PArg>(bound);
+        self.init_pool(tx, rx, producer_fn, consumer_fn)
+    }
+
+    fn init_pool<P, PArg, PType, C>(
+        &self,
+        tx: PType,
+        rx: Receiver<PArg>,
+        producer_fn: P,
+        consumer_fn: C,
+    ) -> Result<JobHandle, std::io::Error>
+    where
+        PType: SenderLike<Item = PArg> + Send + 'static,
+        P: Fn(PType) -> () + Send + 'static,
+        PArg: Send + 'static,
+        C: Fn(PArg) -> Arg + Send + Sync + 'static,
+    {
         let rx = {
-            let (tx, rx) = channel::<PArg>();
             thread::spawn(move || producer_fn(tx));
             rx
         };
@@ -103,6 +157,34 @@ where
     fn join(self) -> std::thread::Result<SR> {
         drop(self.tx);
         self.handler_thread.join()
+    }
+}
+
+impl<Arg, SR> SharedResourcePoolBuilder<Sender<Job<Arg>>, SR>
+where
+    Arg: Send + 'static,
+    SR: Send + 'static,
+{
+    fn new<SC>(shared_resource: SR, shared_consumer_fn: SC) -> Self
+    where
+        SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
+    {
+        let (tx, rx) = channel();
+        Self::init(tx, rx, shared_resource, shared_consumer_fn)
+    }
+}
+
+impl<Arg, SR> SharedResourcePoolBuilder<SyncSender<Job<Arg>>, SR>
+where
+    Arg: Send + 'static,
+    SR: Send + 'static,
+{
+    fn new_bounded<SC>(bound: usize, shared_resource: SR, shared_consumer_fn: SC) -> Self
+    where
+        SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
+    {
+        let (tx, rx) = sync_channel(bound);
+        Self::init(tx, rx, shared_resource, shared_consumer_fn)
     }
 }
 
@@ -157,6 +239,73 @@ mod tests {
         };
 
         assert_eq!(result, (0..5).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_many_integers_with_bounded_shared_producer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder =
+            SharedResourcePoolBuilder::new_bounded(10, Vec::new(), |vec, i| vec.push(i));
+        pool_builder
+            .create_pool(
+                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+                consumer_fn,
+            )
+            .unwrap();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..1000).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_many_integers_with_bounded_item_producer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+        pool_builder
+            .create_pool_bounded(
+                10,
+                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+                consumer_fn,
+            )
+            .unwrap();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..1000).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_many_integers_with_bounded_shared_and_item_producer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder =
+            SharedResourcePoolBuilder::new_bounded(10, Vec::new(), |vec, i| vec.push(i));
+        pool_builder
+            .create_pool_bounded(
+                10,
+                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+                consumer_fn,
+            )
+            .unwrap();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..1000).map(consumer_fn).collect::<Vec<_>>());
     }
 
     #[test]
