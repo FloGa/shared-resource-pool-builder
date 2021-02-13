@@ -1,4 +1,4 @@
-use std::sync::mpsc::{channel, sync_channel, SendError, Sender, SyncSender};
+use std::sync::mpsc::{channel, sync_channel, Receiver, SendError, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
@@ -65,7 +65,30 @@ impl<SType, Arg, SR> SharedResourcePoolBuilder<SType, SR>
 where
     Arg: Send + 'static,
     SType: SenderLike<Item = Job<Arg>> + Clone + Send + 'static,
+    SR: Send + 'static,
 {
+    fn init<SC>(
+        tx: SType,
+        rx: Receiver<Job<Arg>>,
+        mut shared_resource: SR,
+        mut shared_consumer_fn: SC,
+    ) -> Self
+    where
+        SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
+    {
+        let join_handle = thread::spawn(move || {
+            for job in rx {
+                shared_consumer_fn(&mut shared_resource, job.0);
+            }
+            shared_resource
+        });
+
+        Self {
+            tx,
+            handler_thread: join_handle,
+        }
+    }
+
     fn create_pool<P, PArg, C>(
         &self,
         producer_fn: P,
@@ -146,23 +169,12 @@ where
     Arg: Send + 'static,
     SR: Send + 'static,
 {
-    fn new<SC>(mut shared_resource: SR, mut shared_consumer_fn: SC) -> Self
+    fn new<SC>(shared_resource: SR, shared_consumer_fn: SC) -> Self
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {
         let (tx, rx) = channel::<Job<Arg>>();
-
-        let join_handle = thread::spawn(move || {
-            for job in rx {
-                shared_consumer_fn(&mut shared_resource, job.0);
-            }
-            shared_resource
-        });
-
-        Self {
-            tx,
-            handler_thread: join_handle,
-        }
+        Self::init(tx, rx, shared_resource, shared_consumer_fn)
     }
 }
 
@@ -171,23 +183,12 @@ where
     Arg: Send + 'static,
     SR: Send + 'static,
 {
-    fn new_bounded<SC>(bound: usize, mut shared_resource: SR, mut shared_consumer_fn: SC) -> Self
+    fn new_bounded<SC>(bound: usize, shared_resource: SR, shared_consumer_fn: SC) -> Self
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {
         let (tx, rx) = sync_channel::<Job<Arg>>(bound);
-
-        let join_handle = thread::spawn(move || {
-            for job in rx {
-                shared_consumer_fn(&mut shared_resource, job.0);
-            }
-            shared_resource
-        });
-
-        Self {
-            tx,
-            handler_thread: join_handle,
-        }
+        Self::init(tx, rx, shared_resource, shared_consumer_fn)
     }
 }
 
