@@ -1,6 +1,6 @@
 use std::sync::mpsc::{SendError, Sender, SyncSender};
 
-pub(crate) trait SenderLike {
+pub trait SenderLike {
     type Item;
     fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>>;
 }

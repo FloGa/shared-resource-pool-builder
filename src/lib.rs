@@ -11,7 +11,7 @@ use crate::senderlike::SenderLike;
 mod job;
 mod senderlike;
 
-struct SharedResourcePoolBuilder<SType, SR> {
+pub struct SharedResourcePoolBuilder<SType, SR> {
     tx: SType,
     handler_thread: JoinHandle<SR>,
 }
@@ -44,7 +44,7 @@ where
         }
     }
 
-    fn create_pool<P, PArg, C>(
+    pub fn create_pool<P, PArg, C>(
         &self,
         producer_fn: P,
         consumer_fn: C,
@@ -58,7 +58,7 @@ where
         self.init_pool(tx, rx, producer_fn, consumer_fn)
     }
 
-    fn create_pool_bounded<P, PArg, C>(
+    pub fn create_pool_bounded<P, PArg, C>(
         &self,
         bound: usize,
         producer_fn: P,
@@ -109,7 +109,7 @@ where
         Ok(JobHandle::new(join_handle, job_counter))
     }
 
-    fn join(self) -> std::thread::Result<SR> {
+    pub fn join(self) -> std::thread::Result<SR> {
         drop(self.tx);
         self.handler_thread.join()
     }
@@ -120,7 +120,7 @@ where
     Arg: Send + 'static,
     SR: Send + 'static,
 {
-    fn new<SC>(shared_resource: SR, shared_consumer_fn: SC) -> Self
+    pub fn new<SC>(shared_resource: SR, shared_consumer_fn: SC) -> Self
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {
@@ -134,7 +134,7 @@ where
     Arg: Send + 'static,
     SR: Send + 'static,
 {
-    fn new_bounded<SC>(bound: usize, shared_resource: SR, shared_consumer_fn: SC) -> Self
+    pub fn new_bounded<SC>(bound: usize, shared_resource: SR, shared_consumer_fn: SC) -> Self
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {

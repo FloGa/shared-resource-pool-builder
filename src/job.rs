@@ -4,11 +4,11 @@ use std::thread::JoinHandle;
 
 type Counter = Arc<(Mutex<u32>, Condvar)>;
 
-pub(crate) struct Job<Arg>(pub(crate) Arg, pub(crate) JobCounter);
+pub struct Job<Arg>(pub(crate) Arg, pub(crate) JobCounter);
 
 pub(crate) struct JobCounter(pub(crate) Counter);
 
-pub(crate) struct JobHandle {
+pub struct JobHandle {
     pub(crate) join_handle: JoinHandle<()>,
     pub(crate) job_counter: Counter,
 }
@@ -42,7 +42,7 @@ impl JobHandle {
         }
     }
 
-    pub(crate) fn join(self) -> thread::Result<()> {
+    pub fn join(self) -> thread::Result<()> {
         self.join_handle.join()?;
 
         let (lock, cvar) = &*self.job_counter;
