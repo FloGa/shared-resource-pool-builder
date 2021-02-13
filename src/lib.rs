@@ -1,60 +1,15 @@
-use std::sync::mpsc::{channel, sync_channel, Receiver, SendError, Sender, SyncSender};
+use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 
 use rayon::prelude::*;
 
-type Counter = Arc<(Mutex<u32>, Condvar)>;
+use crate::job::{Job, JobCounter, JobHandle};
+use crate::senderlike::SenderLike;
 
-trait SenderLike {
-    type Item;
-    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>>;
-}
-
-impl<T> SenderLike for Sender<T> {
-    type Item = T;
-    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>> {
-        Sender::send(self, t)
-    }
-}
-
-impl<T> SenderLike for SyncSender<T> {
-    type Item = T;
-    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>> {
-        SyncSender::send(self, t)
-    }
-}
-
-struct Job<Arg>(Arg, JobCounter);
-
-struct JobCounter(Counter);
-
-struct JobHandle {
-    join_handle: JoinHandle<()>,
-    job_counter: Counter,
-}
-
-impl JobCounter {
-    fn new(job_counter: Counter) -> Self {
-        {
-            let (lock, _) = &*job_counter;
-            let mut job_counter = lock.lock().unwrap();
-            *job_counter += 1;
-        }
-
-        Self(job_counter)
-    }
-}
-
-impl Drop for JobCounter {
-    fn drop(&mut self) {
-        let (lock, cvar) = &*self.0;
-        let mut job_counter = lock.lock().unwrap();
-        *job_counter -= 1;
-        cvar.notify_all();
-    }
-}
+mod job;
+mod senderlike;
 
 struct SharedResourcePoolBuilder<SType, SR> {
     tx: SType,
@@ -185,27 +140,6 @@ where
     {
         let (tx, rx) = sync_channel(bound);
         Self::init(tx, rx, shared_resource, shared_consumer_fn)
-    }
-}
-
-impl JobHandle {
-    fn new(join_handle: JoinHandle<()>, job_counter: Counter) -> Self {
-        Self {
-            join_handle,
-            job_counter,
-        }
-    }
-
-    fn join(self) -> thread::Result<()> {
-        self.join_handle.join()?;
-
-        let (lock, cvar) = &*self.job_counter;
-        let mut job_counter = lock.lock().unwrap();
-        while *job_counter > 0 {
-            job_counter = cvar.wait(job_counter).unwrap();
-        }
-
-        Ok(())
     }
 }
 
