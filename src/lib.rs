@@ -1,4 +1,4 @@
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, SendError, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
@@ -6,6 +6,25 @@ use std::thread::JoinHandle;
 use rayon::prelude::*;
 
 type Counter = Arc<(Mutex<u32>, Condvar)>;
+
+trait SenderLike {
+    type Item;
+    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>>;
+}
+
+impl<T> SenderLike for Sender<T> {
+    type Item = T;
+    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>> {
+        Sender::send(self, t)
+    }
+}
+
+impl<T> SenderLike for SyncSender<T> {
+    type Item = T;
+    fn send(&self, t: Self::Item) -> Result<(), SendError<Self::Item>> {
+        SyncSender::send(self, t)
+    }
+}
 
 struct Job<Arg>(Arg, JobCounter);
 
