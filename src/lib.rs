@@ -99,28 +99,8 @@ where
         PArg: Send + 'static,
         C: Fn(PArg) -> Arg + Send + Sync + 'static,
     {
-        let rx = {
-            let (tx, rx) = channel::<PArg>();
-            thread::spawn(move || producer_fn(tx));
-            rx
-        };
-
-        let job_counter = Arc::new((Mutex::new(0), Condvar::new()));
-        let join_handle = {
-            let job_counter = Arc::clone(&job_counter);
-            let tx = self.tx.clone();
-            thread::spawn(move || {
-                rx.into_iter()
-                    .par_bridge()
-                    .for_each_with(tx.clone(), |tx, item| {
-                        let job_counter = Arc::clone(&job_counter);
-                        let job = Job(consumer_fn(item), JobCounter::new(job_counter));
-                        tx.send(job).unwrap();
-                    });
-            })
-        };
-
-        Ok(JobHandle::new(join_handle, job_counter))
+        let (tx, rx) = channel::<PArg>();
+        self.init_pool(tx, rx, producer_fn, consumer_fn)
     }
 
     fn create_pool_bounded<P, PArg, C>(
@@ -134,8 +114,24 @@ where
         PArg: Send + 'static,
         C: Fn(PArg) -> Arg + Send + Sync + 'static,
     {
+        let (tx, rx) = sync_channel::<PArg>(bound);
+        self.init_pool(tx, rx, producer_fn, consumer_fn)
+    }
+
+    fn init_pool<P, PArg, PType, C>(
+        &self,
+        tx: PType,
+        rx: Receiver<PArg>,
+        producer_fn: P,
+        consumer_fn: C,
+    ) -> Result<JobHandle, std::io::Error>
+    where
+        PType: SenderLike<Item = PArg> + Send + 'static,
+        P: Fn(PType) -> () + Send + 'static,
+        PArg: Send + 'static,
+        C: Fn(PArg) -> Arg + Send + Sync + 'static,
+    {
         let rx = {
-            let (tx, rx) = sync_channel::<PArg>(bound);
             thread::spawn(move || producer_fn(tx));
             rx
         };
