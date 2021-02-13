@@ -1,4 +1,4 @@
-use std::sync::mpsc::{channel, SendError, Sender, SyncSender};
+use std::sync::mpsc::{channel, sync_channel, SendError, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
@@ -116,6 +116,31 @@ where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {
         let (tx, rx) = channel::<Job<Arg>>();
+
+        let join_handle = thread::spawn(move || {
+            for job in rx {
+                shared_consumer_fn(&mut shared_resource, job.0);
+            }
+            shared_resource
+        });
+
+        Self {
+            tx,
+            handler_thread: join_handle,
+        }
+    }
+}
+
+impl<Arg, SR> SharedResourcePoolBuilder<SyncSender<Job<Arg>>, SR>
+where
+    Arg: Send + 'static,
+    SR: Send + 'static,
+{
+    fn new_bounded<SC>(bound: usize, mut shared_resource: SR, mut shared_consumer_fn: SC) -> Self
+    where
+        SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
+    {
+        let (tx, rx) = sync_channel::<Job<Arg>>(bound);
 
         let join_handle = thread::spawn(move || {
             for job in rx {
