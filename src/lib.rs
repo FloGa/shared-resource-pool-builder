@@ -245,6 +245,73 @@ mod tests {
     }
 
     #[test]
+    fn test_many_integers_with_bounded_shared_producer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder =
+            SharedResourcePoolBuilder::new_bounded(10, Vec::new(), |vec, i| vec.push(i));
+        pool_builder
+            .create_pool(
+                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+                consumer_fn,
+            )
+            .unwrap();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..1000).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_many_integers_with_bounded_item_producer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+        pool_builder
+            .create_pool_bounded(
+                10,
+                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+                consumer_fn,
+            )
+            .unwrap();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..1000).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_many_integers_with_bounded_shared_and_item_producer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder =
+            SharedResourcePoolBuilder::new_bounded(10, Vec::new(), |vec, i| vec.push(i));
+        pool_builder
+            .create_pool_bounded(
+                10,
+                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+                consumer_fn,
+            )
+            .unwrap();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..1000).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn test_many_integers() {
         let consumer_fn = |i| i * 10;
 
