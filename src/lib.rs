@@ -169,7 +169,7 @@ where
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {
-        let (tx, rx) = channel::<Job<Arg>>();
+        let (tx, rx) = channel();
         Self::init(tx, rx, shared_resource, shared_consumer_fn)
     }
 }
@@ -183,7 +183,7 @@ where
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
     {
-        let (tx, rx) = sync_channel::<Job<Arg>>(bound);
+        let (tx, rx) = sync_channel(bound);
         Self::init(tx, rx, shared_resource, shared_consumer_fn)
     }
 }
