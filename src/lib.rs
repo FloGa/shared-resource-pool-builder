@@ -3,7 +3,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 
-use rayon::prelude::*;
 use threadpool::ThreadPool;
 
 use crate::job::{Job, JobCounter, JobHandle};
