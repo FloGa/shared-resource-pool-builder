@@ -86,13 +86,10 @@ where
         PArg: Send + 'static,
         C: Fn(PArg) -> Arg + Send + Sync + 'static,
     {
-        let rx = {
-            thread::spawn(move || producer_fn(tx));
-            rx
-        };
+        let producer_thread = thread::spawn(move || producer_fn(tx));
 
         let job_counter = Arc::new((Mutex::new(0), Condvar::new()));
-        let join_handle = {
+        let consumer_thread = {
             let job_counter = Arc::clone(&job_counter);
             let tx = self.tx.clone();
             thread::spawn(move || {
@@ -105,6 +102,11 @@ where
                     });
             })
         };
+
+        let join_handle = thread::spawn(move || {
+            producer_thread.join().unwrap();
+            consumer_thread.join().unwrap();
+        });
 
         Ok(JobHandle::new(join_handle, job_counter))
     }
