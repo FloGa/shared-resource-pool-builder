@@ -168,6 +168,27 @@ mod tests {
     struct TestElem(String);
 
     #[test]
+    fn test_one_integer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+        pool_builder
+            .create_pool(
+                |tx| vec![1].into_iter().for_each(|i| tx.send(i).unwrap()),
+                consumer_fn,
+            )
+            .unwrap();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, vec![10]);
+    }
+
+    #[test]
     fn test_few_integers() {
         let consumer_fn = |i| i * 10;
 
