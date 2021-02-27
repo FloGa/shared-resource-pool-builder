@@ -4,6 +4,7 @@ use std::thread;
 use std::thread::JoinHandle;
 
 use rayon::prelude::*;
+use threadpool::ThreadPool;
 
 use crate::job::{Job, JobCounter, JobHandle};
 use crate::senderlike::SenderLike;
@@ -14,6 +15,7 @@ mod senderlike;
 pub struct SharedResourcePoolBuilder<SType, SR> {
     tx: SType,
     handler_thread: JoinHandle<SR>,
+    consumer_pool: ThreadPool,
 }
 
 impl<SType, Arg, SR> SharedResourcePoolBuilder<SType, SR>
@@ -38,9 +40,12 @@ where
             shared_resource
         });
 
+        let consumer_pool = threadpool::Builder::new().build();
+
         Self {
             tx,
             handler_thread: join_handle,
+            consumer_pool,
         }
     }
 
@@ -52,7 +57,7 @@ where
     where
         P: Fn(Sender<PArg>) -> () + Send + 'static,
         PArg: Send + 'static,
-        C: Fn(PArg) -> Arg + Send + Sync + 'static,
+        C: Fn(PArg) -> Arg + Clone + Send + Sync + 'static,
     {
         let (tx, rx) = channel::<PArg>();
         self.init_pool(tx, rx, producer_fn, consumer_fn)
@@ -67,7 +72,7 @@ where
     where
         P: Fn(SyncSender<PArg>) -> () + Send + 'static,
         PArg: Send + 'static,
-        C: Fn(PArg) -> Arg + Send + Sync + 'static,
+        C: Fn(PArg) -> Arg + Clone + Send + Sync + 'static,
     {
         let (tx, rx) = sync_channel::<PArg>(bound);
         self.init_pool(tx, rx, producer_fn, consumer_fn)
@@ -84,22 +89,26 @@ where
         PType: SenderLike<Item = PArg> + Send + 'static,
         P: Fn(PType) -> () + Send + 'static,
         PArg: Send + 'static,
-        C: Fn(PArg) -> Arg + Send + Sync + 'static,
+        C: Fn(PArg) -> Arg + Clone + Send + Sync + 'static,
     {
         let producer_thread = thread::spawn(move || producer_fn(tx));
 
         let job_counter = Arc::new((Mutex::new(0), Condvar::new()));
+
         let consumer_thread = {
+            let pool = self.consumer_pool.clone();
             let job_counter = Arc::clone(&job_counter);
             let tx = self.tx.clone();
             thread::spawn(move || {
-                rx.into_iter()
-                    .par_bridge()
-                    .for_each_with(tx.clone(), |tx, item| {
-                        let job_counter = Arc::clone(&job_counter);
-                        let job = Job(consumer_fn(item), JobCounter::new(job_counter));
+                for item in rx {
+                    let tx = tx.clone();
+                    let consumer_fn = consumer_fn.clone();
+                    let job_counter = JobCounter::new(Arc::clone(&job_counter));
+                    pool.execute(move || {
+                        let job = Job(consumer_fn(item), job_counter);
                         tx.send(job).unwrap();
                     });
+                }
             })
         };
 
