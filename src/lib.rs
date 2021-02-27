@@ -155,6 +155,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
 
     struct TestResource(Vec<TestElem>);
@@ -292,6 +294,37 @@ mod tests {
         };
 
         assert_eq!(result, (0..1000).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_wait_until_pool_finishes() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+        let pool = pool_builder
+            .create_pool(
+                |tx| tx.send(1).unwrap(),
+                move |parg| {
+                    thread::sleep(Duration::from_millis(10));
+                    consumer_fn(parg)
+                },
+            )
+            .unwrap();
+
+        pool.join().unwrap();
+
+        let now = Instant::now();
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        let millis = now.elapsed().as_millis();
+        assert!(millis < 10);
+
+        assert_eq!(result, vec![10]);
     }
 
     #[test]
