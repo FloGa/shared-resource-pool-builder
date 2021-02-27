@@ -378,6 +378,58 @@ mod tests {
     }
 
     #[test]
+    fn test_integers_multiple_pools_with_parallel_producers() {
+        let producer_pool = threadpool::Builder::new().build();
+
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+        let pools = vec![
+            {
+                let producer_pool = producer_pool.clone();
+                pool_builder
+                    .create_pool(
+                        move |tx| {
+                            (0..50).into_iter().for_each(|i| {
+                                let tx = tx.clone();
+                                producer_pool.execute(move || tx.send(i).unwrap())
+                            });
+                        },
+                        |i| i * 10,
+                    )
+                    .unwrap()
+            },
+            {
+                let producer_pool = producer_pool.clone();
+                pool_builder
+                    .create_pool(
+                        move |tx| {
+                            (50..100).into_iter().for_each(|i| {
+                                let tx = tx.clone();
+                                producer_pool.execute(move || tx.send(i).unwrap())
+                            });
+                        },
+                        |i| i * 10,
+                    )
+                    .unwrap()
+            },
+        ];
+
+        for pool in pools {
+            pool.join().unwrap();
+        }
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(
+            result,
+            (0..100).into_iter().map(|i| i * 10).collect::<Vec<_>>()
+        )
+    }
+
+    #[test]
     fn test_custom_types() {
         let producer_fn = || ('a'..='z').map(|c| String::from(c));
 
