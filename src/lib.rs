@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn test_integers_multiple_pools() {
+    fn test_integers_multiple_pools_parallel() {
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
         let pools = vec![
             pool_builder
@@ -342,6 +342,31 @@ mod tests {
         for pool in pools {
             pool.join().unwrap();
         }
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, vec![0, 10, 20, 30, 40])
+    }
+
+    #[test]
+    fn test_integers_multiple_pools_sequential() {
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+
+        let pool = pool_builder
+            .create_pool(|tx| (2..5).for_each(|i| tx.send(i).unwrap()), |i| i * 10)
+            .unwrap();
+
+        pool.join().unwrap();
+
+        let pool = pool_builder
+            .create_pool(|tx| (0..2).for_each(|i| tx.send(i).unwrap()), |i| i * 10)
+            .unwrap();
+
+        pool.join().unwrap();
 
         let result = {
             let mut result = pool_builder.join().unwrap();
