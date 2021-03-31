@@ -139,6 +139,7 @@ use crate::senderlike::SenderLike;
 mod job;
 mod senderlike;
 
+/// The builder to create pools on a shared resource.
 pub struct SharedResourcePoolBuilder<SType, SR> {
     tx: SType,
     handler_thread: JoinHandle<SR>,
@@ -176,6 +177,59 @@ where
         }
     }
 
+    /// Creates an unbounded producer-consumer pool.
+    ///
+    /// This method takes two parameters:
+    ///
+    /// -   The producer function
+    ///
+    ///     This function will generate the items to be further processed by the consumer. It must
+    ///     take one parameter, which is a sender like object like [`Sender`]. To generate an item
+    ///     for the consumer, use the `send()` method of the sender.
+    ///
+    ///     The return type of this function will be ignored, i.e. it is `()`.
+    ///
+    ///     By design, this function will run in only one thread. If you want it to run in multiple
+    ///     threads, you need to implement that by yourself. The preferred way is to run only a
+    ///     cheap listing algorithm in the producer and let the consumer do the computational
+    ///     intensive tasks, which will by default run within a thread pool.
+    ///
+    /// -   The consumer function
+    ///
+    ///     This function takes one parameter and will be called for each item that was sent by the
+    ///     producer. The return type must be the same type that is used by the shared consumer as
+    ///     defined by the [`Self::new()`] method.
+    ///
+    ///     By design, the consumer functions will be run within a thread pool that is shared with
+    ///     every other pool consumers created by this builder. The number of threads is the number
+    ///     of cores, as defined by the default value of [`threadpool::Builder::num_threads()`].
+    ///
+    /// The message channel, in which the producer sends and the consumer receives the items, is
+    /// unlimited with this function (in other words, it uses [`channel()`]). On modern systems and
+    /// "typical" use-cases, this should not be a problem. If however your system is low on memory
+    /// or your producer generates millions over millions of items, then you might be interested in
+    /// the [bounded](`Self::create_pool_bounded()`) variant of this method.
+    ///
+    /// # Example
+    ///
+    /// Assuming that `heavy_algorithm()` converts an integer to an object that can be used with
+    /// the shared consumer function, a pool creation might look like this:
+    ///
+    /// ```rust
+    /// # use std::error::Error;
+    /// # use std::sync::mpsc::Sender;
+    /// # use shared_resource_pool_builder::SharedResourcePoolBuilder;
+    /// #
+    /// # fn heavy_algorithm(i: i32) -> i32 { i }
+    /// #
+    /// # fn example() {
+    /// # let pool_builder = SharedResourcePoolBuilder::new(true, |res, item|());
+    /// pool_builder.create_pool(
+    ///     |tx| (0..10).for_each(|i| tx.send(i).unwrap()),
+    ///     |i| heavy_algorithm(i),
+    /// );
+    /// # }
+    /// ```
     pub fn create_pool<P, PArg, C>(&self, producer_fn: P, consumer_fn: C) -> JobHandle
     where
         P: Fn(Sender<PArg>) -> () + Send + 'static,
@@ -186,6 +240,40 @@ where
         self.init_pool(tx, rx, producer_fn, consumer_fn)
     }
 
+    /// Creates a bounded producer-consumer pool.
+    ///
+    /// This method is nearly identical to its [unbounded](`Self::create_pool()`) variant. For a
+    /// detailled description of the producer and consumer parameters, please look there.
+    ///
+    /// The difference is, that this function takes an additional integer parameter, which limits
+    /// the size of the message channel, that is used by the producer and consumer (in other words,
+    /// it uses [`sync_channel()`]). If the channel is full, the producer will block until the
+    /// consumer takes at least one item. This can be useful if you expect a huge amount of items
+    /// to be generated, or if your system is low on memory.
+    ///
+    /// # Example
+    ///
+    /// Assuming that `crazy_producer()` generates a huge amount of integer values, and that
+    /// `heavy_algorithm()` converts an integer to an object that can be used with the shared
+    /// consumer function, a bounded pool creation with a buffer of 100 items might look like this:
+    ///
+    /// ```rust
+    /// # use std::error::Error;
+    /// # use std::sync::mpsc::Sender;
+    /// # use shared_resource_pool_builder::SharedResourcePoolBuilder;
+    /// #
+    /// # fn crazy_producer() -> Vec<i32> { vec![] }
+    /// # fn heavy_algorithm(i: i32) -> i32 { i }
+    /// #
+    /// # fn example() {
+    /// # let pool_builder = SharedResourcePoolBuilder::new(true, |res, item|());
+    /// pool_builder.create_pool_bounded(
+    ///     100,
+    ///     |tx| crazy_producer().into_iter().for_each(|i| tx.send(i).unwrap()),
+    ///     |i| heavy_algorithm(i),
+    /// );
+    /// # }
+    /// ```
     pub fn create_pool_bounded<P, PArg, C>(
         &self,
         bound: usize,
@@ -243,6 +331,35 @@ where
         JobHandle::new(join_handle, job_counter)
     }
 
+    /// Waits for all tasks to finish their work and return the shared resource afterwards.
+    ///
+    /// This implicitly waits for all created pools to be finished, since their jobs all end up in
+    /// the shared consumer. Note that after this call, this pool builder can no longer be used,
+    /// since the shared resource will be moved to the caller.
+    ///
+    /// This method returns a [`thread::Result`]. Since the `Err` variant of this specialized
+    /// `Result` does not implement the [`Error`](std::error::Error) trait, the `?`-operator does
+    /// not work here. For more information about how to handle panics in this case, please refer
+    /// to the documentation of [`thread::Result`].
+    ///
+    /// # Example:
+    ///
+    /// ```rust
+    /// # use shared_resource_pool_builder::SharedResourcePoolBuilder;
+    /// #
+    /// # fn shared_consumer_fn(vec: &mut Vec<i32>, i: i32) {};
+    /// # fn heavy_algorithm(i: i32) -> i32 { i }
+    /// #
+    /// # fn example() {
+    /// let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), shared_consumer_fn);
+    /// pool_builder.create_pool(
+    ///     |tx| (0..10).for_each(|i| tx.send(i).unwrap()),
+    ///     |i| heavy_algorithm(i),
+    /// );
+    ///
+    /// let result = pool_builder.join().unwrap();
+    /// # }
+    /// ```
     pub fn join(self) -> thread::Result<SR> {
         drop(self.tx);
         self.handler_thread.join()
@@ -254,6 +371,52 @@ where
     Arg: Send + 'static,
     SR: Send + 'static,
 {
+    /// Creates a new unbounded pool builder.
+    ///
+    /// This function takes two parameters:
+    ///
+    /// -   The shared resource
+    ///
+    ///     This will be the resource that is used with every item that gets sent from the pool
+    ///     consumer functions. Usually this will be something that cannot be easily shared with
+    ///     multiple threads, like a database connection object. But this is not a restriction, you
+    ///     can use pretty much everything as the shared resource.
+    ///
+    /// -   The shared consumer function
+    ///
+    ///     This function is called for each item that comes from the pool consumers, together with
+    ///     the shared resource. To give you the maximum flexibility, the function must take two
+    ///     parameters: The shared resource and an item. The type of the item will be always the
+    ///     same for every pool consumer you create with this builder.
+    ///
+    /// Note, that the message channel, which is used by the pool consumers to communicate with the
+    /// shared consumer, is unlimited (in other words, it uses [`channel()`]). On modern systems
+    /// and "typical" use-cases, this should not be a problem. If however your system is low on
+    /// memory or your producers generate millions over millions of items, then you might be
+    /// interested in the [bounded](`Self::new_bounded()`) variant of this method.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use shared_resource_pool_builder::SharedResourcePoolBuilder;
+    /// #
+    /// let pool_builder = SharedResourcePoolBuilder::new(
+    ///     // We can use pretty much anything as the shared resource. Here, we are using a Vector:
+    ///     Vec::new(),
+    ///
+    ///     // Naturally, our shared consumer will add an item to the Vector. The type of "i" can
+    ///     // either be given explicitly, or simply let Rust infer it.
+    ///     |vec, i| vec.push(i)
+    /// );
+    ///
+    /// // Now we create a (very simple) pool for demonstration purpose. Since we return "i"
+    /// // unaltered, the parameter type of the shared consumer as well as the item type of the
+    /// // shared Vector will be inferred to "u8".
+    /// pool_builder.create_pool(
+    ///     |tx| tx.send(1u8).unwrap(),
+    ///     |i| i,
+    /// );
+    /// ```
     pub fn new<SC>(shared_resource: SR, shared_consumer_fn: SC) -> Self
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
@@ -268,6 +431,45 @@ where
     Arg: Send + 'static,
     SR: Send + 'static,
 {
+    /// Creates a new bounded pool builder.
+    ///
+    /// This method is nearly identical to its [unbounded](`Self::new()`) variant. For a detailled
+    /// description of the shared resource and shared consumer parameters, please look there.
+    ///
+    /// The difference is, that this function takes an additional integer parameter, which limits
+    /// the size of the message channel, that is used by the pool consumers to communicate with the
+    /// shared consumer (in other words, it uses [`sync_channel()`]). If the channel is full, the
+    /// pool consumers will block until the shared consumer takes at least one item. This can be
+    /// useful if you expect a huge amount of items to be generated, or if your system is low on
+    /// memory.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use shared_resource_pool_builder::SharedResourcePoolBuilder;
+    /// #
+    /// let pool_builder = SharedResourcePoolBuilder::new_bounded(
+    ///     // We are very low on memory
+    ///     10,
+    ///
+    ///     // We can use pretty much anything as the shared resource. Here, we are using a Vector:
+    ///     Vec::new(),
+    ///
+    ///     // Naturally, our shared consumer will add an item to the Vector. The type of "i" can
+    ///     // either be given explicitly, or simply let Rust infer it.
+    ///     |vec, i| vec.push(i)
+    /// );
+    ///
+    /// // Now we create a (very simple) pool for demonstration purpose. Since we return "i"
+    /// // unaltered, the parameter type of the shared consumer as well as the item type of the
+    /// // shared Vector will be inferred to "u8".
+    /// pool_builder.create_pool(
+    ///     |tx| tx.send(1u8).unwrap(),
+    ///     |i| i,
+    /// );
+    ///
+    /// // No matter how many pools we create, the maximum buffered items will never exceed 10.
+    /// ```
     pub fn new_bounded<SC>(bound: usize, shared_resource: SR, shared_consumer_fn: SC) -> Self
     where
         SC: FnMut(&mut SR, Arg) -> () + Send + Sync + 'static,
