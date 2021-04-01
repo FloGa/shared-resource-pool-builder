@@ -9,6 +9,7 @@ repository = "https://github.com/FloGa/shared-resource-pool-builder"
 readme = "README.md"
 categories = ["concurrency"]
 keywords = ["shared_resource", "threads", "threadpool"]
+license = "MIT"
 
 [dependencies]
 threadpool = "1.8.1"
