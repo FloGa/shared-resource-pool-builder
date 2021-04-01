@@ -5,6 +5,10 @@ authors = ["Florian Gamböck <mail@floga.de>"]
 edition = "2018"
 
 description = "Create thread pools with a shared resource."
+repository = "https://github.com/FloGa/shared-resource-pool-builder"
+readme = "README.md"
+categories = ["concurrency"]
+keywords = ["shared_resource", "threads", "threadpool"]
 
 [dependencies]
 threadpool = "1.8.1"
