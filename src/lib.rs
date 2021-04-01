@@ -133,7 +133,8 @@ use std::thread::JoinHandle;
 
 use threadpool::ThreadPool;
 
-use crate::job::{Job, JobCounter, JobHandle};
+pub use crate::job::JobHandle;
+use crate::job::{Job, JobCounter};
 use crate::senderlike::SenderLike;
 
 mod job;
