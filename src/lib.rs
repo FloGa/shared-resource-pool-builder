@@ -115,7 +115,7 @@ where
         JobHandle::new(join_handle, job_counter)
     }
 
-    pub fn join(self) -> std::thread::Result<SR> {
+    pub fn join(self) -> thread::Result<SR> {
         drop(self.tx);
         self.handler_thread.join()
     }
