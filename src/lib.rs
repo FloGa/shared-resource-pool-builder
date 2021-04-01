@@ -48,11 +48,7 @@ where
         }
     }
 
-    pub fn create_pool<P, PArg, C>(
-        &self,
-        producer_fn: P,
-        consumer_fn: C,
-    ) -> Result<JobHandle, std::io::Error>
+    pub fn create_pool<P, PArg, C>(&self, producer_fn: P, consumer_fn: C) -> JobHandle
     where
         P: Fn(Sender<PArg>) -> () + Send + 'static,
         PArg: Send + 'static,
@@ -67,7 +63,7 @@ where
         bound: usize,
         producer_fn: P,
         consumer_fn: C,
-    ) -> Result<JobHandle, std::io::Error>
+    ) -> JobHandle
     where
         P: Fn(SyncSender<PArg>) -> () + Send + 'static,
         PArg: Send + 'static,
@@ -83,7 +79,7 @@ where
         rx: Receiver<PArg>,
         producer_fn: P,
         consumer_fn: C,
-    ) -> Result<JobHandle, std::io::Error>
+    ) -> JobHandle
     where
         PType: SenderLike<Item = PArg> + Send + 'static,
         P: Fn(PType) -> () + Send + 'static,
@@ -116,10 +112,10 @@ where
             consumer_thread.join().unwrap();
         });
 
-        Ok(JobHandle::new(join_handle, job_counter))
+        JobHandle::new(join_handle, job_counter)
     }
 
-    pub fn join(self) -> std::thread::Result<SR> {
+    pub fn join(self) -> thread::Result<SR> {
         drop(self.tx);
         self.handler_thread.join()
     }
@@ -174,12 +170,10 @@ mod tests {
         let consumer_fn = |i| i * 10;
 
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
-        pool_builder
-            .create_pool(
-                |tx| vec![1].into_iter().for_each(|i| tx.send(i).unwrap()),
-                consumer_fn,
-            )
-            .unwrap();
+        pool_builder.create_pool(
+            |tx| vec![1].into_iter().for_each(|i| tx.send(i).unwrap()),
+            consumer_fn,
+        );
 
         let result = {
             let mut result = pool_builder.join().unwrap();
@@ -195,9 +189,7 @@ mod tests {
         let consumer_fn = |i| i * 10;
 
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
-        pool_builder
-            .create_pool(|tx| (0..5).for_each(|i| tx.send(i).unwrap()), consumer_fn)
-            .unwrap();
+        pool_builder.create_pool(|tx| (0..5).for_each(|i| tx.send(i).unwrap()), consumer_fn);
 
         let result = {
             let mut result = pool_builder.join().unwrap();
@@ -214,12 +206,10 @@ mod tests {
 
         let pool_builder =
             SharedResourcePoolBuilder::new_bounded(10, Vec::new(), |vec, i| vec.push(i));
-        pool_builder
-            .create_pool(
-                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
-                consumer_fn,
-            )
-            .unwrap();
+        pool_builder.create_pool(
+            |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+            consumer_fn,
+        );
 
         let result = {
             let mut result = pool_builder.join().unwrap();
@@ -235,13 +225,11 @@ mod tests {
         let consumer_fn = |i| i * 10;
 
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
-        pool_builder
-            .create_pool_bounded(
-                10,
-                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
-                consumer_fn,
-            )
-            .unwrap();
+        pool_builder.create_pool_bounded(
+            10,
+            |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+            consumer_fn,
+        );
 
         let result = {
             let mut result = pool_builder.join().unwrap();
@@ -258,13 +246,11 @@ mod tests {
 
         let pool_builder =
             SharedResourcePoolBuilder::new_bounded(10, Vec::new(), |vec, i| vec.push(i));
-        pool_builder
-            .create_pool_bounded(
-                10,
-                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
-                consumer_fn,
-            )
-            .unwrap();
+        pool_builder.create_pool_bounded(
+            10,
+            |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+            consumer_fn,
+        );
 
         let result = {
             let mut result = pool_builder.join().unwrap();
@@ -280,12 +266,10 @@ mod tests {
         let consumer_fn = |i| i * 10;
 
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
-        pool_builder
-            .create_pool(
-                |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
-                consumer_fn,
-            )
-            .unwrap();
+        pool_builder.create_pool(
+            |tx| (0..1000).for_each(|i| tx.send(i).unwrap()),
+            consumer_fn,
+        );
 
         let result = {
             let mut result = pool_builder.join().unwrap();
@@ -301,15 +285,13 @@ mod tests {
         let consumer_fn = |i| i * 10;
 
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
-        let pool = pool_builder
-            .create_pool(
-                |tx| tx.send(1).unwrap(),
-                move |parg| {
-                    thread::sleep(Duration::from_millis(10));
-                    consumer_fn(parg)
-                },
-            )
-            .unwrap();
+        let pool = pool_builder.create_pool(
+            |tx| tx.send(1).unwrap(),
+            move |parg| {
+                thread::sleep(Duration::from_millis(10));
+                consumer_fn(parg)
+            },
+        );
 
         pool.join().unwrap();
 
@@ -331,12 +313,8 @@ mod tests {
     fn test_integers_multiple_pools_parallel() {
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
         let pools = vec![
-            pool_builder
-                .create_pool(|tx| (0..2).for_each(|i| tx.send(i).unwrap()), |i| i * 10)
-                .unwrap(),
-            pool_builder
-                .create_pool(|tx| (2..5).for_each(|i| tx.send(i).unwrap()), |i| i * 10)
-                .unwrap(),
+            pool_builder.create_pool(|tx| (0..2).for_each(|i| tx.send(i).unwrap()), |i| i * 10),
+            pool_builder.create_pool(|tx| (2..5).for_each(|i| tx.send(i).unwrap()), |i| i * 10),
         ];
 
         for pool in pools {
@@ -356,15 +334,13 @@ mod tests {
     fn test_integers_multiple_pools_sequential() {
         let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
 
-        let pool = pool_builder
-            .create_pool(|tx| (2..5).for_each(|i| tx.send(i).unwrap()), |i| i * 10)
-            .unwrap();
+        let pool =
+            pool_builder.create_pool(|tx| (2..5).for_each(|i| tx.send(i).unwrap()), |i| i * 10);
 
         pool.join().unwrap();
 
-        let pool = pool_builder
-            .create_pool(|tx| (0..2).for_each(|i| tx.send(i).unwrap()), |i| i * 10)
-            .unwrap();
+        let pool =
+            pool_builder.create_pool(|tx| (0..2).for_each(|i| tx.send(i).unwrap()), |i| i * 10);
 
         pool.join().unwrap();
 
@@ -385,31 +361,27 @@ mod tests {
         let pools = vec![
             {
                 let producer_pool = producer_pool.clone();
-                pool_builder
-                    .create_pool(
-                        move |tx| {
-                            (0..50).into_iter().for_each(|i| {
-                                let tx = tx.clone();
-                                producer_pool.execute(move || tx.send(i).unwrap())
-                            });
-                        },
-                        |i| i * 10,
-                    )
-                    .unwrap()
+                pool_builder.create_pool(
+                    move |tx| {
+                        (0..50).into_iter().for_each(|i| {
+                            let tx = tx.clone();
+                            producer_pool.execute(move || tx.send(i).unwrap())
+                        });
+                    },
+                    |i| i * 10,
+                )
             },
             {
                 let producer_pool = producer_pool.clone();
-                pool_builder
-                    .create_pool(
-                        move |tx| {
-                            (50..100).into_iter().for_each(|i| {
-                                let tx = tx.clone();
-                                producer_pool.execute(move || tx.send(i).unwrap())
-                            });
-                        },
-                        |i| i * 10,
-                    )
-                    .unwrap()
+                pool_builder.create_pool(
+                    move |tx| {
+                        (50..100).into_iter().for_each(|i| {
+                            let tx = tx.clone();
+                            producer_pool.execute(move || tx.send(i).unwrap())
+                        });
+                    },
+                    |i| i * 10,
+                )
             },
         ];
 
@@ -435,12 +407,10 @@ mod tests {
 
         let pool_builder =
             SharedResourcePoolBuilder::new(TestResource(Vec::new()), |tres, e| tres.add(e));
-        pool_builder
-            .create_pool(
-                move |tx| producer_fn().for_each(|i| tx.send(i).unwrap()),
-                |c| TestElem(c),
-            )
-            .unwrap();
+        pool_builder.create_pool(
+            move |tx| producer_fn().for_each(|i| tx.send(i).unwrap()),
+            |c| TestElem(c),
+        );
 
         let result = {
             let mut result = pool_builder
