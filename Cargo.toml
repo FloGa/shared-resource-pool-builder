@@ -1,10 +1,15 @@
 [package]
 name = "shared-resource-pool-builder"
-version = "0.1.0-SNAPSHOT"
+version = "0.1.0"
 authors = ["Florian Gamböck <mail@floga.de>"]
 edition = "2018"
 
 description = "Create thread pools with a shared resource."
+repository = "https://github.com/FloGa/shared-resource-pool-builder"
+readme = "README.md"
+categories = ["concurrency"]
+keywords = ["shared_resource", "threads", "threadpool"]
+license = "MIT"
 
 [dependencies]
-rayon = "1.5.0"
+threadpool = "1.8.1"
