@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "shared-resource-pool-builder"
-version = "0.1.0-SNAPSHOT"
+version = "0.1.0"
 dependencies = [
  "threadpool",
 ]
