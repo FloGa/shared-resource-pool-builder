@@ -4,6 +4,7 @@ use std::thread::JoinHandle;
 
 type Counter = Arc<(Mutex<u32>, Condvar)>;
 
+/// Argument type that gets sent to the shared resource
 pub struct Job<Arg>(pub(crate) Arg, pub(crate) JobCounter);
 
 pub(crate) struct JobCounter(pub(crate) Counter);
