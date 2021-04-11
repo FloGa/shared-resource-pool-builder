@@ -532,6 +532,28 @@ mod tests {
     }
 
     #[test]
+    fn test_few_integers_with_delayed_producer() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+        pool_builder.create_pool(
+            |tx| {
+                thread::sleep(Duration::from_millis(10));
+                (0..5).for_each(|i| tx.send(i).unwrap());
+            },
+            consumer_fn,
+        );
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..5).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn test_many_integers_with_bounded_shared_producer() {
         let consumer_fn = |i| i * 10;
 
