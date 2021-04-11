@@ -332,6 +332,127 @@ where
         JobHandle::new(join_handle, job_counter)
     }
 
+    /// Send one single item to the shared consumer.
+    ///
+    /// This method can be used to communicate with the shared resource, before creating another
+    /// pool. Maybe you just want to add another item to the shared consumer. Or you want to use
+    /// this method to trigger an alternate bevahior of the shared consumer.
+    ///
+    /// Internally, this method behaves much like the [`Self::create_pool()`] method. It returns a
+    /// [`JobHandle`], which can be waited on with [`JobHandle::join()`]. The item is sent to the
+    /// message queue of the pool builder and might not be consumed immediately if there are other
+    /// items waiting.
+    ///
+    /// # Examples
+    ///
+    /// ## Add another item
+    ///
+    /// In the following example, in addition to summing up 0, 1, and 2, as well as 4, 5, and 6, we
+    /// add a single 3 to the result:
+    ///
+    /// ```rust
+    /// # use shared_resource_pool_builder::SharedResourcePoolBuilder;
+    /// #
+    /// let pool_builder = SharedResourcePoolBuilder::new(0, |sum, i| *sum += i);
+    ///
+    /// pool_builder.create_pool(
+    ///     |tx| vec![0, 1, 2].into_iter().for_each(|i| tx.send(i).unwrap()),
+    ///     |i| i,
+    /// );
+    ///
+    /// pool_builder.oneshot(3);
+    ///
+    /// pool_builder.create_pool(
+    ///     |tx| vec![4, 5, 6].into_iter().for_each(|i| tx.send(i).unwrap()),
+    ///     |i| i,
+    /// );
+    ///
+    /// let result = pool_builder.join().unwrap();
+    ///
+    /// assert_eq!(result, 21);
+    /// ```
+    ///
+    /// ## Trigger alternate behavior
+    ///
+    /// In the following example, we change the behavior of the shared consumer in the middle of
+    /// the execution:
+    ///
+    /// ```rust
+    /// # use shared_resource_pool_builder::SharedResourcePoolBuilder;
+    /// #
+    /// let pool_builder = SharedResourcePoolBuilder::new(
+    ///     // Here we define our shared resource to be a tuple. The second element will determine
+    ///     // our current behavior and can be altered in the shared consumer function.
+    ///     (0, true),
+    ///
+    ///     // The whole tuple must be used in the shared consumer. Add or subtract the received
+    ///     // value `i`, depending on the state of `adding`. If `None` is received, swap the state
+    ///     // variable, so that upcoming values will be handled by the alternate behavior.
+    ///     |(sum, adding), i| {
+    ///         match i {
+    ///             Some(i) => {
+    ///                 if *adding {
+    ///                     *sum += i;
+    ///                 } else {
+    ///                     *sum -= i;
+    ///                 }
+    ///             }
+    ///             None => {
+    ///                 *adding = !*adding;
+    ///             }
+    ///         }
+    ///     },
+    /// );
+    ///
+    /// // First we add some numbers
+    /// pool_builder.create_pool(
+    ///     |tx| vec![0, 1, 2].into_iter().for_each(|i| tx.send(Some(i)).unwrap()),
+    ///     |i| i,
+    /// ).join().unwrap();
+    ///
+    /// // Swap summing behavior
+    /// pool_builder.oneshot(None).join().unwrap();
+    ///
+    /// // Now we subtract the same numbers again, with the same code as before
+    /// pool_builder.create_pool(
+    ///     |tx| vec![0, 1, 2].into_iter().for_each(|i| tx.send(Some(i)).unwrap()),
+    ///     |i| i,
+    /// );
+    ///
+    /// // Remember that we defined a boolean in our shared resource tuple. We are not interested
+    /// // in this one anymore, so we explicitly ignore it here.
+    /// let (result, _) = pool_builder.join().unwrap();
+    ///
+    /// // Since we subtracted the same amount as we added, the result is now 0
+    /// assert_eq!(result, 0);
+    ///
+    /// // Note that we joined the first pool and the oneshot to await them to be finished. In this
+    /// // simple example, it would normally not be necessary, since sending merely three items
+    /// // happens quite immediately and the shared consumer handles all items sequentially.
+    /// // Nevertheless, there could be a race condition if for some reason the swapping is
+    /// // triggered before all items could be added. In more complex scenarios, care should be
+    /// // taken to await all previous pools with `join()` before altering the shared consumer
+    /// // behavior.
+    /// ```
+    pub fn oneshot(&self, item: Arg) -> JobHandle {
+        let job_counter = Arc::new((Mutex::new(0), Condvar::new()));
+
+        let oneshot_thread = {
+            let pool = self.consumer_pool.clone();
+            let job_counter = Arc::clone(&job_counter);
+            let tx = self.tx.clone();
+            thread::spawn(move || {
+                let job_counter = JobCounter::new(job_counter);
+                pool.execute(move || {
+                    let job = Job(item, job_counter);
+                    tx.send(job).unwrap();
+                });
+            })
+        };
+
+        JobHandle::new(oneshot_thread, job_counter)
+    }
+
     /// Waits for all tasks to finish their work and return the shared resource afterwards.
     ///
     /// This implicitly waits for all created pools to be finished, since their jobs all end up in
