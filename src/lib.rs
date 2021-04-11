@@ -653,6 +653,23 @@ mod tests {
     }
 
     #[test]
+    fn test_few_integers_with_oneshot() {
+        let consumer_fn = |i| i * 10;
+
+        let pool_builder = SharedResourcePoolBuilder::new(Vec::new(), |vec, i| vec.push(i));
+        pool_builder.create_pool(|tx| (0..5).for_each(|i| tx.send(i).unwrap()), consumer_fn);
+        pool_builder.oneshot(consumer_fn(5));
+
+        let result = {
+            let mut result = pool_builder.join().unwrap();
+            result.sort();
+            result
+        };
+
+        assert_eq!(result, (0..6).map(consumer_fn).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn test_few_integers_with_delayed_producer() {
         let consumer_fn = |i| i * 10;
 
