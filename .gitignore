@@ -1,1 +1,4 @@
 /target
+
+# Libs should not include lock file
+/Cargo.lock
